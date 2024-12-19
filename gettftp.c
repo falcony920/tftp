@@ -1,66 +1,101 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <unistd.h>
-
+// Improved gettftp.c with debugging messages
 #include "utils.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <arpa/inet.h>
 
-#define MAX_BUFFER_SIZE 512 // Maximum buffer size for TFTP
-#define TFTP_PORT "69"      // Default TFTP port
-#define TFTP_MODE "octet"   // Transfer mode
-
-int main(int argc, char *argv[])
+void cmd_gettftp(int argc, char *argv[])
 {
     if (argc != 3)
     {
-        printf("Usage: %s <server> <file>\n", argv[0]);
-        return EXIT_FAILURE;
+        fprintf(stderr, "Usage: ./tftp gettftp <host> <file>\n");
+        return;
     }
 
-    const char *server = argv[1];
-    const char *filename = argv[2];
-
-    printf("Server Address: %s\n", server);
-    printf("File Name: %s\n", filename);
-
-    // Resolve server address
-    struct sockaddr_in server_addr;
     struct addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;      // IPv4
-    hints.ai_socktype = SOCK_DGRAM; // UDP
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_protocol = IPPROTO_UDP;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
 
-    if (getaddrinfo(server, TFTP_PORT, &hints, &res) != 0)
+    // Resolve the server address
+    if (getaddrinfo(argv[1], "1069", &hints, &res) != 0)
     {
-        perror("Error resolving server address");
-        return EXIT_FAILURE;
+        perror("[ERROR] getaddrinfo failed");
+        return;
     }
 
-    server_addr = *(struct sockaddr_in *)res->ai_addr;
+    // Create a UDP socket
+    int sd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sd < 0)
+    {
+        perror("[ERROR] Socket creation failed");
+        freeaddrinfo(res);
+        return;
+    }
+
+    printf("[DEBUG] Socket created successfully\n");
+
+    // Send the RRQ request
+    sendRRQ(&sd, res, argv[2]);
+    printf("[DEBUG] RRQ sent for file: %s\n", argv[2]);
+
+    FILE *file = fopen(argv[2], "wb");
+    if (!file)
+    {
+        perror("[ERROR] Failed to open file for writing");
+        close(sd);
+        freeaddrinfo(res);
+        return;
+    }
+
+    struct sockaddr_storage server_addr;
+    socklen_t server_addr_len = sizeof(server_addr);
+    int block_number = 1;
+
+    while (1)
+    {
+        char recv_buffer[BufferSize];
+
+        printf("[DEBUG] Waiting for data from the server...\n");
+
+        // Receive data from the server
+        ssize_t bytes_received = recvfrom(sd, recv_buffer, BufferSize, 0,
+                                          (struct sockaddr *)&server_addr, &server_addr_len);
+
+        if (bytes_received < 0)
+        {
+            perror("[ERROR] Receiving data failed");
+            break;
+        }
+
+        printf("[DEBUG] Received %zd bytes from server\n", bytes_received);
+
+        if (bytes_received < 4 || recv_buffer[1] != 3)
+        {
+            fprintf(stderr, "[ERROR] Invalid DATA packet received\n");
+            break;
+        }
+
+        // Write received data to the file
+        fwrite(recv_buffer + 4, 1, bytes_received - 4, file);
+        printf("[DEBUG] Written %zd bytes to file\n", bytes_received - 4);
+
+        // Send an ACK back to the server
+        sendACK(&sd, (struct sockaddr *)&server_addr, server_addr_len, block_number++);
+        printf("[DEBUG] Sent ACK for block %d\n", block_number - 1);
+
+        // If the last packet is smaller than BufferSize, transfer is complete
+        if (bytes_received < BufferSize)
+        {
+            printf("[INFO] File transfer complete\n");
+            break;
+        }
+    }
+
+    fclose(file);
+    close(sd);
     freeaddrinfo(res);
-
-    // Create socket
-    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0)
-    {
-        perror("Error creating socket");
-        return EXIT_FAILURE;
-    }
-
-    printf("Socket created. Sending RRQ...\n");
-
-    // Send RRQ
-    send_rrq(sockfd, &server_addr, filename);
-
-    // Receive data and ACK
-    receive_single_data_and_ack(sockfd, &server_addr);
-
-    // Close socket
-    close(sockfd);
-    printf("File transfer complete.\n");
-
-    return EXIT_SUCCESS;
 }

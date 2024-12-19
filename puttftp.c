@@ -1,24 +1,67 @@
-#include <stdio.h>
-#include <stdlib.h>
 
-// Main function: argc = argument count, argv = argument vector (array of strings)
-int main(int argc, char *argv[])
+#include "utils.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+void cmd_puttftp(int argc, char *argv[])
 {
-    // Check if the correct number of arguments is provided
     if (argc != 3)
     {
-        fprintf(stderr, "Usage: %s <server> <file>\n", argv[0]);
-        exit(EXIT_FAILURE);
+        fprintf(stderr, "Usage: ./tftp puttftp <host> <file>\n");
+        return;
     }
 
-    // Extract server and file arguments
-    char *server = argv[1];
-    char *file = argv[2];
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_protocol = IPPROTO_UDP;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
 
-    // Print the arguments (confirm they're received correctly)
-    printf("Server Address: %s\n", server);
-    printf("File Name: %s\n", file);
+    if (getaddrinfo(argv[1], Port, &hints, &res) != 0)
+    {
+        perror("getaddrinfo failed");
+        return;
+    }
 
-    // This is where you would add further TFTP functionality
-    return 0;
+    int sd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sd < 0)
+    {
+        perror("Socket creation failed");
+        freeaddrinfo(res);
+        return;
+    }
+
+    // Envoie de la requête d'écriture (WRQ)
+    sendWRQ(&sd, res, argv[2]);
+
+    FILE *file = fopen(argv[2], "rb");
+    if (!file)
+    {
+        perror("Failed to open file");
+        close(sd);
+        freeaddrinfo(res);
+        return;
+    }
+
+    char buffer[BufferSize];
+    int packet_number = 1;
+    size_t bytes_read;
+
+    // Envoi des paquets de données
+    while ((bytes_read = fread(buffer, 1, BufferSize - 4, file)) > 0)
+    {
+        sendData(&sd, res, buffer, packet_number++);
+        if (recvACK(&sd, res) != 0)
+        {
+            perror("Failed to receive ACK");
+            break;
+        }
+    }
+
+    fclose(file);
+    close(sd);
+    freeaddrinfo(res);
 }

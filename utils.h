@@ -1,11 +1,18 @@
-#ifndef FORTUNEDATE_H
-#define FORTUNEDATE_H
+//
+// Created by alex on 12/18/24.
+//
+#ifndef UTILS_H
+#define UTILS_H
+#include <netdb.h>
+#define BufferSize 512
+#define Port "1069"
+#define WrongCommandget "Please enter a command in the following format : gettftp <host> <file>\r\n"
+#define WrongCommandput "Please enter a command in the following format : puttftp <host> <file>\r\n"
 
-// Function declarations for fortune and date execution
-void send_rrq(int sockfd, struct sockaddr_in *server_addr, const char *filename);
-
-void receive_data_and_ack(int sockfd, struct sockaddr_in *server_addr);
-
-void receive_multiple_data_and_acks(int sockfd, struct sockaddr_in *server_addr);
-
-#endif
+void sendWRQ(int *sd, struct addrinfo *res, const char *file);
+void sendRRQ(int *sd, struct addrinfo *res, const char *file);
+int recvACK(int *sd, struct addrinfo *res);
+int recvData(int *sd, struct sockaddr *server_addr, socklen_t *addr_len, char *buffer);
+void sendData(int *sd, struct addrinfo *res, const char *data, int packet_number);
+void sendACK(int *sd, struct sockaddr *server_addr, socklen_t addr_len, int block_number);
+#endif // UTILS_H
